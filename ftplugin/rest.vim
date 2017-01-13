@@ -108,14 +108,33 @@ function! s:ParseVerbQuery(start, end)
     return [lineNum, s:StrTrim(getline(lineNum))]
 endfunction
 
+function! s:ParseFlags(start, end)
+  let curPos = getpos('.')
+  call cursor(a:start, 1)
+  let lineNum = search('^>>', 'cn', a:end)
+  call cursor(curPos[1:])
+  if !lineNum
+    return [lineNum, []]
+  endif
+  let flags = split(strpart(getline(lineNum), 2), ",")
+  echom join(flags, " | ")
+  return [lineNum, flags]
+endfunction
+
 """
 " Parse header options between the given line numbers (inclusive end).
 "
 " @return dict
 "
-function! s:ParseHeaders(start, end)
+function! s:ParseHeaders(start, end, flags)
     let contentTypeOpt = s:GetOptValue('vrc_header_content_type', 'application/json')
+
+    if index(a:flags, 'form') >= 0
+      let contentTypeOpt = 'application/x-www-form-urlencoded'
+    endif
+
     let headers = {'Content-Type': contentTypeOpt}
+
     if (a:end < a:start)
         return headers
     endif
@@ -234,8 +253,13 @@ function! s:ParseRequest(start, resumeFrom, end, globSection)
         let lineNumNextVerb = a:end + 1
     endif
 
+    let [lineNumFlags, flags] = s:ParseFlags(lineNumHost + 1, lineNumVerb - 1)
+    if !lineNumFlags
+      let lineNumFlags = lineNumHost
+    endif
+
     """ Parse headers if any and merge with global headers.
-    let localHeaders = s:ParseHeaders(lineNumHost + 1, lineNumVerb - 1)
+    let localHeaders = s:ParseHeaders(lineNumFlags + 1, lineNumVerb - 1, flags)
     let headers = get(a:globSection, 'headers', {})
     call extend(headers, localHeaders)
 
@@ -261,6 +285,7 @@ function! s:ParseRequest(start, resumeFrom, end, globSection)
     \   'resumeFrom': resumeFrom,
     \   'msg': '',
     \   'host': host,
+    \   'flags': flags,
     \   'headers': headers,
     \   'httpVerb': httpVerb,
     \   'requestPath': queryPath,
@@ -274,6 +299,8 @@ endfunction
 function! s:GetCurlCommand(request)
     """ Construct curl args.
     let curlArgs = ['-sS']
+
+    let flags = a:request.flags
 
     let vrcIncludeHeader = s:GetOptValue('vrc_include_response_header', 1)
     if vrcIncludeHeader
@@ -327,7 +354,7 @@ function! s:GetCurlCommand(request)
     if !empty(dataBody)
         call add(
         \   curlArgs,
-        \   s:GetCurlDataArgs(httpVerb, dataBody)
+        \   s:GetCurlDataArgs(httpVerb, dataBody, flags)
         \)
     endif
     return 'curl ' . join(curlArgs) . ' ' . shellescape(a:request.host . a:request.requestPath)
@@ -355,7 +382,7 @@ endfunction
 " @param  list dataLines
 " @return string
 "
-function! s:GetCurlDataArgs(httpVerb, dataLines)
+function! s:GetCurlDataArgs(httpVerb, dataLines, flags)
     """ These verbs should have request body passed as POST params.
     if a:httpVerb ==? 'POST'
     \  || a:httpVerb ==? 'PUT'
@@ -367,7 +394,7 @@ function! s:GetCurlDataArgs(httpVerb, dataLines)
         endif
 
         """ If request body is split line by line.
-        if s:GetOptValue('vrc_split_request_body', 0)
+        if s:GetOptValue('vrc_split_request_body', 0) || index(a:flags, "form") >= 0
             call map(a:dataLines, '"--data " . shellescape(v:val)')
             return join(a:dataLines)
         endif
