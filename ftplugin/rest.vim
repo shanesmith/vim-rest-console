@@ -99,25 +99,25 @@ endfunction
 function! s:LineNumsRequestBlock()
   let curPos = getpos('.')
 
-  let blockStart = 0
+  let contentFirstLine = 0
   let blockEnd   = 0
   let lineNumGlobDelim = s:LineNumGlobSectionDelim()
 
   """ Find the start of the enclosing request block.
   normal! $
-  let blockStart = search(s:vrc_block_delimiter, 'bn')
-  if !blockStart || blockStart > curPos[1] || blockStart <= lineNumGlobDelim
+  let contentFirstLine = search(s:vrc_block_delimiter, 'bn')
+  if !contentFirstLine || contentFirstLine > curPos[1] || contentFirstLine <= lineNumGlobDelim
     call cursor(curPos[1:])
     return [0, 0]
   endif
 
   """ Find the start of the next request block.
   let blockEnd = search(s:vrc_block_delimiter, 'n') - 1
-  if blockEnd <= blockStart
+  if blockEnd <= contentFirstLine
     let blockEnd = line('$')
   endif
   call cursor(curPos[1:])
-  return [blockStart, blockEnd]
+  return [contentFirstLine, blockEnd]
 endfunction
 
 """
@@ -612,11 +612,23 @@ function! s:DisplayOutput(tmpBufName, outputInfo, config)
   endif
 
   """ Detect content-type based on the returned header.
-  let emptyLineNum = 0
+  let lastHeaderFirstLine = 1
+  let contentFirstLine = 1
   if includeResponseHeader
-    call cursor(1, 0)
-    let emptyLineNum = search('\v^\s*$', 'n')
-    let contentTypeLineNum = search('\v\c^Content-Type:', 'n', emptyLineNum)
+    while getline(contentFirstLine) =~# '\v^HTTP\/\d'
+      call cursor(contentFirstLine, 0)
+      let nextBlank = search('\v^$', 'n')
+
+      if nextBlank == 0
+        break
+      endif
+
+      let lastHeaderFirstLine = contentFirstLine
+      let contentFirstLine = nextBlank + 1
+    endwhile
+
+    call cursor(lastHeaderFirstLine, 0)
+    let contentTypeLineNum = search('\v\c^Content-Type:', 'n', contentFirstLine - 1)
 
     if contentTypeLineNum > 0
       let contentType = substitute(
@@ -627,6 +639,22 @@ function! s:DisplayOutput(tmpBufName, outputInfo, config)
       \)
     endif
   endif
+
+  " let emptyLineNum = 0
+  " if includeResponseHeader
+  "   call cursor(1, 0)
+  "   let emptyLineNum = search('\v^\s*$', 'n')
+  "   let contentTypeLineNum = search('\v\c^Content-Type:', 'n', emptyLineNum)
+  "
+  "   if contentTypeLineNum > 0
+  "     let contentType = substitute(
+  "       \ getline(contentTypeLineNum),
+  "       \ '\v\c^Content-Type:\s*([^;[:blank:]]*).*$',
+  "       \ '\1',
+  "       \ 'g'
+  "     \)
+  "   endif
+  " endif
 
   """ Continue with options depending content-type.
   if !empty(contentType)
@@ -639,10 +667,10 @@ function! s:DisplayOutput(tmpBufName, outputInfo, config)
         """ Auto-format response body
         let formattedBody = system(
           \ formatCmd,
-          \ getline(emptyLineNum, '$')
+          \ getline(contentFirstLine, '$')
         \)
         if v:shell_error == 0
-          silent! execute (emptyLineNum + 1) . ',$delete _'
+          silent! execute contentFirstLine . ',$delete _'
           if s:GetOpt('vrc_auto_format_uhex', 0)
             let formattedBody = substitute(
               \ formattedBody,
@@ -664,7 +692,7 @@ function! s:DisplayOutput(tmpBufName, outputInfo, config)
       syntax clear
       try
         execute "syntax include @vrc_" . fileType . " syntax/" . fileType . ".vim"
-        execute "syntax region body start=/^$/ end=/\%$/ contains=@vrc_" . fileType
+        execute "syntax region body start=/\\%" . contentFirstLine . "l/ end=/\%$/ contains=@vrc_" . fileType
       catch
       endtry
     endif
