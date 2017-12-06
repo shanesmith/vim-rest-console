@@ -556,11 +556,12 @@ function! s:GetCurlDataArgs(request)
   endif
 
   """ For other cases, request body is passed as GET params.
-  if s:GetOpt('vrc_split_request_body', 0)
+  if httpVerb ==? 'GET' || s:GetOpt('vrc_split_request_body', 0)
     """ If request body is split, url-encode each line.
     call map(dataLines, '"--data-urlencode " . shellescape(v:val)')
     return join(dataLines)
   endif
+
   """ Otherwise, url-encode and send the request body as a whole.
   return '--data-urlencode ' . shellescape(join(dataLines, ''))
 endfunction
